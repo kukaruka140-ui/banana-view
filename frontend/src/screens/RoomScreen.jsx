@@ -14,12 +14,6 @@ const TABS = {
 
 /**
  * Головний екран кімнати.
- *
- * Layout:
- *  - Верх: код кімнати + статус з'єднання + кнопка "поділитись"
- *  - Плеєр (з накладкою плаваючих реакцій)
- *  - Учасники
- *  - Таби: Чат / Управління відео (для хоста) + Реакції завжди видимі
  */
 export default function RoomScreen({ room, tg, haptic, onLeave }) {
   const [tab, setTab] = useState(TABS.CHAT);
@@ -43,6 +37,7 @@ export default function RoomScreen({ room, tg, haptic, onLeave }) {
     playNext,
     clearError,
     connected,
+    toggleMessageReaction, // НОВИЙ МЕТОД з useRoom (потрібно буде додати)
   } = room;
 
   // Якщо хост ще не вибрав відео - автоматично відкриваємо таб керування для хоста
@@ -99,14 +94,14 @@ export default function RoomScreen({ room, tg, haptic, onLeave }) {
       {error && (
         <div
           onClick={clearError}
-          className="mx-4 mt-3 bg-coral/15 border border-coral/40 text-coral text-sm rounded-2xl px-4 py-2 text-center"
+          className="mx-4 mt-3 bg-coral/15 border border-coral/40 text-coral text-sm rounded-2xl px-4 py-2 text-center cursor-pointer"
         >
           {error}
         </div>
       )}
 
-      {/* Player */}
-      <div className="relative px-4 pt-4">
+      {/* Player (ОНОВЛЕНО: додано класи w-full max-w-5xl mx-auto для збільшення розміру) */}
+      <div className="relative px-4 pt-4 w-full max-w-5xl mx-auto flex-shrink-0">
         <VideoPlayer
           video={video}
           playback={playback}
@@ -117,13 +112,15 @@ export default function RoomScreen({ room, tg, haptic, onLeave }) {
       </div>
 
       {video?.title && (
-        <p className="px-4 pt-2 text-sm text-cream font-medium truncate">{video.title}</p>
+        <p className="px-4 pt-2 text-sm text-cream font-medium truncate max-w-5xl mx-auto w-full">
+          {video.title}
+        </p>
       )}
 
       {/* Members */}
       <MembersBar members={members} />
 
-      {/* Reactions */}
+      {/* Floating Reactions */}
       <div className="py-2">
         <ReactionBar onSend={sendReaction} haptic={haptic} />
       </div>
@@ -141,7 +138,12 @@ export default function RoomScreen({ room, tg, haptic, onLeave }) {
       {/* Tab content */}
       <div className="flex-1 min-h-0 flex flex-col">
         {tab === TABS.CHAT && (
-          <ChatPanel chatHistory={chatHistory} onSend={sendChat} myUserId={me?.userId} />
+          <ChatPanel 
+            chatHistory={chatHistory} 
+            onSend={sendChat} 
+            myUserId={me?.userId}
+            onToggleReaction={toggleMessageReaction} // Передаємо новий пропс
+          />
         )}
 
         {tab === TABS.VIDEO && (
