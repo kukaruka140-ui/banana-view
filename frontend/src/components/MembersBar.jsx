@@ -1,0 +1,37 @@
+/**
+ * Горизонтальний список учасників з аватарками-плейсхолдерами
+ * (перша літера імені) та бейджем хоста.
+ */
+export default function MembersBar({ members }) {
+  return (
+    <div className="flex items-center gap-2 overflow-x-auto scrollbar-thin px-4 py-2">
+      {members.map((m) => (
+        <div
+          key={m.userId}
+          className="flex items-center gap-1.5 bg-panel2 rounded-full pl-1 pr-3 py-1 shrink-0"
+          title={m.name}
+        >
+          <Avatar name={m.name} avatarUrl={m.avatarUrl} />
+          <span className="text-xs text-cream max-w-[80px] truncate">{m.name}</span>
+          {m.isHost && (
+            <span className="text-[10px] bg-banana text-ink font-display font-semibold rounded-full px-1.5 py-0.5">
+              host
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Avatar({ name, avatarUrl }) {
+  if (avatarUrl) {
+    return <img src={avatarUrl} alt={name} className="w-6 h-6 rounded-full object-cover" />;
+  }
+  const initial = (name || "?").trim().charAt(0).toUpperCase();
+  return (
+    <div className="w-6 h-6 rounded-full bg-grape flex items-center justify-center text-[11px] font-display font-semibold text-cream">
+      {initial}
+    </div>
+  );
+}

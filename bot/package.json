@@ -1,0 +1,15 @@
+{
+  "name": "bananaview-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot для BananaView - запуск Mini App та deep-link запрошення",
+  "main": "bot.js",
+  "type": "module",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "node --watch bot.js"
+  },
+  "dependencies": {
+    "grammy": "^1.21.1",
+    "dotenv": "^16.4.5"
+  }
+}
