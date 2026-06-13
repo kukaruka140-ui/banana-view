@@ -4,14 +4,6 @@ import { BACKEND_URL } from "../lib/config";
 
 /**
  * Керує Socket.io з'єднанням і всім станом кімнати на клієнті.
- *
- * Використання:
- *   const room = useRoom();
- *   room.join({ code, name, avatarUrl, userId });
- *   room.setVideo(url, title);
- *   room.syncPlayback(currentTime, isPlaying);
- *   room.sendChat(text);
- *   room.sendReaction(emoji);
  */
 export function useRoom() {
   const socketRef = useRef(null);
@@ -27,7 +19,7 @@ export function useRoom() {
     isPlaying: false,
     updatedAt: Date.now(),
   });
-  const [reactions, setReactions] = useState([]); // { id, emoji, ts }
+  const [reactions, setReactions] = useState([]); // Плаваючі реакції { id, emoji, ts }
   const [error, setError] = useState(null);
   const [me, setMe] = useState(null); // { userId, name }
 
@@ -45,7 +37,7 @@ export function useRoom() {
       setCode(state.code);
       setVideoState(state.video);
       setMembers(state.members);
-      setChatHistory(state.chatHistory);
+      setChatHistory(state.chatHistory || []);
       setPlaylist(state.playlist);
       setPlayback({
         currentTime: state.playback.currentTime,
@@ -60,16 +52,24 @@ export function useRoom() {
 
     socket.on("playback:update", (update) => setPlayback(update));
 
+    // Додавання нового повідомлення
     socket.on("chat:message", (msg) =>
       setChatHistory((prev) => [...prev.slice(-99), msg])
     );
 
+    // Оновлення існуючого повідомлення (наприклад, при додаванні реакції)
+    socket.on("chat:message_updated", (updatedMsg) => {
+      setChatHistory((prev) =>
+        prev.map((msg) => (msg.id === updatedMsg.id ? updatedMsg : msg))
+      );
+    });
+
     socket.on("playlist:updated", ({ playlist }) => setPlaylist(playlist));
 
+    // Плаваючі реакції
     socket.on("reaction:broadcast", ({ emoji }) => {
       const id = `${Date.now()}-${Math.random()}`;
       setReactions((prev) => [...prev, { id, emoji, ts: Date.now() }]);
-      // авто-видалення після завершення анімації
       setTimeout(() => {
         setReactions((prev) => prev.filter((r) => r.id !== id));
       }, 2500);
@@ -99,8 +99,14 @@ export function useRoom() {
     socketRef.current?.emit("playback:request_sync");
   }, []);
 
-  const sendChat = useCallback((text) => {
-    socketRef.current?.emit("chat:message", { text });
+  // ОНОВЛЕНО: Додано підтримку replyToId
+  const sendChat = useCallback((text, replyToId = null) => {
+    socketRef.current?.emit("chat:message", { text, replyToId });
+  }, []);
+
+  // НОВЕ: Відправка реакції на конкретне повідомлення
+  const toggleMessageReaction = useCallback((messageId, emoji) => {
+    socketRef.current?.emit("chat:reaction", { messageId, emoji });
   }, []);
 
   const sendReaction = useCallback((emoji) => {
@@ -138,6 +144,7 @@ export function useRoom() {
     syncPlayback,
     requestSync,
     sendChat,
+    toggleMessageReaction, // Експортуємо нову функцію
     sendReaction,
     addToPlaylist,
     playNext,
