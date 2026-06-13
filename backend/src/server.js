@@ -114,29 +114,6 @@ const io = new Server(httpServer, {
   cors: corsOptions,
 });
 
-/**
- * Socket.io події:
- *
- * Клієнт -> Сервер:
- *  - "room:join"      { code, name, avatarUrl, userId }
- *  - "video:set"      { url, title }                (тільки хост)
- *  - "playback:sync"  { currentTime, isPlaying }     (тільки хост)
- *  - "playback:request_sync"  {}                     (будь-хто, просить актуальний стан)
- *  - "chat:message"   { text }
- *  - "reaction:send"  { emoji }
- *  - "playlist:add"   { url, title }
- *  - "playlist:next"  {}                             (тільки хост)
- *
- * Сервер -> Клієнт:
- *  - "room:state"     повний snapshot кімнати (room.toJSON())
- *  - "room:members"   оновлений список учасників
- *  - "video:changed"  { video }
- *  - "playback:update"  { currentTime, isPlaying, updatedAt }
- *  - "chat:message"   { from, text, ts }
- *  - "reaction:broadcast"  { from, emoji }
- *  - "playlist:updated"  { playlist }
- *  - "error"          { message }
- */
 io.on("connection", (socket) => {
   socket.on("room:join", ({ code, name, avatarUrl, userId }) => {
     if (!code || typeof code !== "string") {
@@ -146,9 +123,6 @@ io.on("connection", (socket) => {
 
     let room = roomManager.getRoom(code);
 
-    // Якщо кімната була "зарезервована" через POST /api/rooms (pending host),
-    // і це перший справжній socket-учасник з тим самим userId - заповнюємо
-    // його реальний socketId замість pending-заглушки.
     if (room) {
       for (const [socketId, member] of room.members.entries()) {
         if (socketId.startsWith("pending-") && member.userId === userId) {
@@ -180,6 +154,7 @@ io.on("connection", (socket) => {
     io.to(code).emit("room:members", room.toJSON().members);
 
     socket.to(code).emit("chat:message", {
+      id: Date.now().toString(), // Додано ID для системного повідомлення
       from: { name: resolvedName, system: true },
       text: `${resolvedName} приєднався до перегляду`,
       ts: Date.now(),
@@ -187,9 +162,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  /**
-   * Хост встановлює нове відео для кімнати.
-   */
   socket.on("video:set", ({ url, title }) => {
     const room = getRoomForSocket(socket);
     if (!room) return;
@@ -215,22 +187,14 @@ io.on("connection", (socket) => {
     });
   });
 
-  /**
-   * Хост синхронізує play/pause/seek для всіх.
-   */
   socket.on("playback:sync", ({ currentTime, isPlaying }) => {
     const room = getRoomForSocket(socket);
     if (!room) return;
 
     const member = room.getMember(socket.id);
-    if (!member?.isHost) {
-      // Не-хост не може керувати плеєром глобально - просто ігноруємо
-      return;
-    }
+    if (!member?.isHost) return;
 
-    if (typeof currentTime !== "number" || typeof isPlaying !== "boolean") {
-      return;
-    }
+    if (typeof currentTime !== "number" || typeof isPlaying !== "boolean") return;
 
     room.setPlayback({ currentTime, isPlaying });
 
@@ -241,10 +205,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  /**
-   * Будь-хто може запросити поточний стан плеєра
-   * (наприклад, при відновленні з'єднання).
-   */
   socket.on("playback:request_sync", () => {
     const room = getRoomForSocket(socket);
     if (!room) return;
@@ -257,9 +217,9 @@ io.on("connection", (socket) => {
   });
 
   /**
-   * Текстовий чат.
+   * Текстовий чат (ОНОВЛЕНО: додано id, replyToId, та структуру реакцій)
    */
-  socket.on("chat:message", ({ text }) => {
+  socket.on("chat:message", ({ text, replyToId }) => {
     const room = getRoomForSocket(socket);
     if (!room) return;
 
@@ -270,8 +230,11 @@ io.on("connection", (socket) => {
     if (!trimmed) return;
 
     const message = {
+      id: Date.now().toString() + Math.random().toString(36).substring(7),
       from: { userId: member.userId, name: member.name, avatarUrl: member.avatarUrl },
       text: trimmed,
+      replyToId: replyToId || null,
+      reactions: {}, // Заготовка під реакції конкретного повідомлення
       ts: Date.now(),
     };
 
@@ -280,8 +243,42 @@ io.on("connection", (socket) => {
   });
 
   /**
-   * Плаваючі емоджі-реакції (TikTok/Rave-style).
-   * Не зберігаються в історії - лише миттєва розсилка.
+   * НОВИЙ ІВЕНТ: Швидкі реакції на конкретні повідомлення в чаті
+   */
+  socket.on("chat:reaction", ({ messageId, emoji }) => {
+    const room = getRoomForSocket(socket);
+    if (!room) return;
+
+    const member = room.getMember(socket.id);
+    if (!member) return;
+
+    const allowed = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+    if (!allowed.includes(emoji)) return;
+
+    // Шукаємо повідомлення в історії кімнати
+    if (room.chatHistory) {
+      const msg = room.chatHistory.find((m) => m.id === messageId);
+      if (msg) {
+        if (!msg.reactions) msg.reactions = {};
+        if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
+
+        const userIndex = msg.reactions[emoji].indexOf(member.name);
+        
+        // Тогл: якщо реакція вже стоїть — забираємо, якщо ні — ставимо
+        if (userIndex > -1) {
+          msg.reactions[emoji].splice(userIndex, 1);
+          if (msg.reactions[emoji].length === 0) delete msg.reactions[emoji];
+        } else {
+          msg.reactions[emoji].push(member.name);
+        }
+
+        io.to(room.code).emit("chat:message_updated", msg);
+      }
+    }
+  });
+
+  /**
+   * Плаваючі емоджі-реакції (старі)
    */
   socket.on("reaction:send", ({ emoji }) => {
     const room = getRoomForSocket(socket);
@@ -300,9 +297,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  /**
-   * Додавання відео в черту (плейлист).
-   */
   socket.on("playlist:add", ({ url, title }) => {
     const room = getRoomForSocket(socket);
     if (!room) return;
@@ -321,9 +315,6 @@ io.on("connection", (socket) => {
     io.to(room.code).emit("playlist:updated", { playlist: room.playlist });
   });
 
-  /**
-   * Хост перемикає на наступне відео з плейлиста.
-   */
   socket.on("playlist:next", () => {
     const room = getRoomForSocket(socket);
     if (!room) return;
@@ -354,6 +345,7 @@ io.on("connection", (socket) => {
 
     if (newHost) {
       io.to(room.code).emit("chat:message", {
+        id: Date.now().toString(),
         from: { name: newHost.name, system: true },
         text: `${newHost.name} став новим хостом`,
         ts: Date.now(),
