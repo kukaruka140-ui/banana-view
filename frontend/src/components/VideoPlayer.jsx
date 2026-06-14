@@ -158,7 +158,7 @@ export default function VideoPlayer({ video, playback, isHost, onSync }) {
 
   if (!video?.url) {
     return (
-      <div className="aspect-video w-full rounded-blob bg-panel flex items-center justify-center text-mist font-display text-lg px-6 text-center">
+      <div className="w-full h-full rounded-blob bg-panel flex items-center justify-center text-mist font-display text-lg px-6 text-center">
         Хост ще не вибрав відео 🍌
       </div>
     );
@@ -166,20 +166,20 @@ export default function VideoPlayer({ video, playback, isHost, onSync }) {
 
   if (isYouTube) {
     return (
-      <div className="aspect-video w-full rounded-blob overflow-hidden bg-black">
+      <div className="w-full h-full rounded-blob overflow-hidden bg-black">
         <div id="yt-player" className="w-full h-full" />
       </div>
     );
   }
 
   return (
-    <div className="aspect-video w-full rounded-blob overflow-hidden bg-black">
+    <div className="w-full h-full rounded-blob overflow-hidden bg-black flex items-center justify-center">
       <video
         ref={videoRef}
         src={src}
         controls
         playsInline
-        className="w-full h-full"
+        className="w-full h-full object-contain"
       />
     </div>
   );
