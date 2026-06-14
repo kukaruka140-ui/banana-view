@@ -1,196 +1,174 @@
 import { useEffect, useRef, useState } from "react";
-
-const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
-
-// Розширений список для панелі вводу
-const INPUT_EMOJIS = [
-  "😀", "😂", "😅", "😍", "🥰", "😎", "😏", "🤔", "🙄", "😬",
-  "😭", "😡", "👍", "👎", "❤️", "💔", "🔥", "✨", "🎉", "🍌",
-  "👀", "💯", "🤡", "👽", "👻", "🤓", "🤝", "🙏"
-];
+import Avatar from "./Avatar";
+import MessageActionSheet from "./MessageActionSheet";
 
 /**
- * Панель чату: історія повідомлень + поле введення + реакції + відповіді + розумний скрол.
+ * Чат кімнати в стилі Telegram.
+ *
+ * Поведінка скролу:
+ *  - При відкритті - одразу скролимо в самий низ (без анімації)
+ *  - Якщо користувач знаходиться внизу і приходить нове повідомлення -
+ *    плавно скролимо вниз
+ *  - Якщо користувач проскролив вгору (читає історію) - НЕ скролимо
+ *    автоматично, натомість показуємо кнопку "нові повідомлення"
+ *
+ * Дії з повідомленням (тап або long-press на бульбашці):
+ *  - відкриває нижню панель з швидкими реакціями та кнопкою "Відповісти"
+ *  - реакції транслюються через chat:react, лічильники показуються
+ *    під бульбашкою
  */
-export default function ChatPanel({ chatHistory, onSend, myUserId, onToggleReaction }) {
+export default function ChatPanel({ chatHistory, onSend, onReact, myUserId }) {
   const [text, setText] = useState("");
-  const [replyingTo, setReplyingTo] = useState(null);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [isAtBottom, setIsAtBottom] = useState(true); // Відстежуємо позицію скролу
-  
-  const chatContainerRef = useRef(null);
-  const messagesEndRef = useRef(null);
+  const [replyTo, setReplyTo] = useState(null);
+  const [activeMessage, setActiveMessage] = useState(null);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
 
-  // Надійний скрол до низу
-  const scrollToBottom = (behavior = "smooth") => {
-    messagesEndRef.current?.scrollIntoView({ behavior });
+  const listRef = useRef(null);
+  const isAtBottomRef = useRef(true);
+  const isFirstRenderRef = useRef(true);
+
+  // Скрол до низу
+  const scrollToBottom = (smooth = true) => {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
   };
 
-  // Розумний автоскрол при нових повідомленнях
-  useEffect(() => {
-    if (isAtBottom) {
-      scrollToBottom();
-    }
-  }, [chatHistory, isAtBottom]);
-
-  // Обробник скролу: перевіряємо, чи користувач прогорнув вгору
+  // Стеження за позицією скролу
   const handleScroll = () => {
-    if (!chatContainerRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
-    
-    // Якщо до кінця залишилось менше 50px, вважаємо, що ми внизу
-    const isNearBottom = scrollHeight - scrollTop - clientHeight < 50;
-    setIsAtBottom(isNearBottom);
+    const el = listRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distanceFromBottom < 60;
+    isAtBottomRef.current = atBottom;
+    if (atBottom) setShowJumpToBottom(false);
   };
+
+  // При відкритті кімнати - миттєвий скрол вниз
+  useEffect(() => {
+    if (isFirstRenderRef.current && chatHistory.length > 0) {
+      scrollToBottom(false);
+      isFirstRenderRef.current = false;
+    }
+  }, [chatHistory.length]);
+
+  // При новому повідомленні
+  useEffect(() => {
+    if (isFirstRenderRef.current) return;
+
+    if (isAtBottomRef.current) {
+      scrollToBottom(true);
+    } else {
+      setShowJumpToBottom(true);
+    }
+  }, [chatHistory]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     const trimmed = text.trim();
     if (!trimmed) return;
-    
-    onSend(trimmed, replyingTo?.id || null);
-    
+    onSend(trimmed, replyTo);
     setText("");
-    setReplyingTo(null);
-    setShowEmojiPicker(false);
-    
-    // Примусово скролимо вниз після власного повідомлення
-    setTimeout(() => scrollToBottom("smooth"), 100);
+    setReplyTo(null);
+    isAtBottomRef.current = true;
+    requestAnimationFrame(() => scrollToBottom(true));
   };
 
-  const addEmojiToInput = (emoji) => {
-    setText((prev) => prev + emoji);
+  const handleJumpToBottom = () => {
+    isAtBottomRef.current = true;
+    setShowJumpToBottom(false);
+    scrollToBottom(true);
   };
-
-  const getReplyMessage = (id) => chatHistory.find((m) => m.id === id);
 
   return (
     <div className="flex flex-col h-full relative">
-      {/* Контейнер повідомлень */}
-      <div 
-        ref={chatContainerRef}
+      <div
+        ref={listRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto scrollbar-thin px-4 py-3 space-y-3 pb-4"
+        className="flex-1 overflow-y-auto scrollbar-thin px-3 py-2 flex flex-col gap-1.5"
       >
         {chatHistory.length === 0 && (
           <p className="text-mist text-sm text-center mt-6">
             Поки тихо. Напиши щось першим 👋
           </p>
         )}
-        
         {chatHistory.map((msg, i) => (
-          <ChatMessage 
-            key={msg.id || i} 
-            msg={msg} 
+          <ChatMessage
+            key={msg.id || i}
+            msg={msg}
             isMine={msg.from?.userId === myUserId}
-            onReply={() => setReplyingTo(msg)}
-            onReact={(emoji) => onToggleReaction(msg.id, emoji)}
-            replyQuote={msg.replyToId ? getReplyMessage(msg.replyToId) : null}
+            myUserId={myUserId}
+            onOpenActions={() => !msg.system && setActiveMessage(msg)}
           />
         ))}
-        <div ref={messagesEndRef} />
       </div>
 
-      {/* Плаваюча кнопка скролу вниз (з'являється, якщо прогорнули вгору) */}
-      {!isAtBottom && (
+      {showJumpToBottom && (
         <button
-          onClick={() => scrollToBottom("smooth")}
-          className="absolute bottom-20 right-4 bg-panel2/90 backdrop-blur text-banana w-10 h-10 rounded-full shadow-lg flex items-center justify-center hover:bg-panel border border-mist/20 z-10 transition-transform active:scale-90"
-          title="Вниз"
+          onClick={handleJumpToBottom}
+          className="absolute bottom-20 right-4 bg-banana text-ink font-display font-semibold rounded-full px-3 py-1.5 text-xs shadow-lg active:scale-95 transition-transform"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
+          ↓ Нові повідомлення
         </button>
       )}
 
-      {/* Нижня панель вводу */}
-      <div className="bg-panel border-t border-panel2 flex flex-col relative">
-        {replyingTo && (
-          <div className="flex items-center justify-between px-4 py-2 bg-panel2/50 border-l-2 border-banana text-sm">
-            <div className="truncate flex-1 text-mist">
-              <span className="font-semibold text-cream">{replyingTo.from?.name}: </span>
-              {replyingTo.text}
-            </div>
-            <button 
-              onClick={() => setReplyingTo(null)} 
-              className="text-mist hover:text-coral ml-3 p-1"
-            >
-              ✕
-            </button>
+      {/* Прев'ю відповіді */}
+      {replyTo && (
+        <div className="flex items-center gap-2 px-3 py-2 border-t border-panel2 bg-panel">
+          <div className="w-1 self-stretch bg-banana rounded-full" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-banana font-medium">{replyTo.from?.name}</p>
+            <p className="text-xs text-mist truncate">{replyTo.text}</p>
           </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="flex items-center gap-2 p-3">
-          
-          {/* Кнопка Емоджі */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-              className="p-2 text-mist hover:text-banana transition-colors rounded-full hover:bg-panel2"
-            >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <path d="M8 14s1.5 2 4 2 4-2 4-2"></path>
-                <line x1="9" y1="9" x2="9.01" y2="9"></line>
-                <line x1="15" y1="9" x2="15.01" y2="9"></line>
-              </svg>
-            </button>
-
-            {/* Попап з емоджі */}
-            {showEmojiPicker && (
-              <div className="absolute bottom-full left-0 mb-2 bg-panel2 border border-mist/20 rounded-xl p-2 shadow-2xl w-64 z-50">
-                <div className="grid grid-cols-7 gap-1">
-                  {INPUT_EMOJIS.map(emoji => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      onClick={() => addEmojiToInput(emoji)}
-                      className="hover:bg-panel rounded p-1 text-lg hover:scale-110 transition-transform"
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Написати в чат..."
-            maxLength={500}
-            className="flex-1 bg-panel2 text-cream placeholder:text-mist rounded-full px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-banana"
-          />
           <button
-            type="submit"
-            disabled={!text.trim()}
-            className="bg-banana text-ink font-display font-semibold rounded-full px-4 py-2.5 text-sm disabled:opacity-40 active:scale-95 transition-transform"
+            onClick={() => setReplyTo(null)}
+            className="text-mist text-lg px-1 shrink-0"
+            aria-label="Скасувати відповідь"
           >
-            Send
+            ✕
           </button>
-        </form>
+        </div>
+      )}
 
-        {/* Прозорий оверлей для закриття панелі емоджі при кліку поза нею */}
-        {showEmojiPicker && (
-          <div 
-            className="fixed inset-0 z-40" 
-            onClick={() => setShowEmojiPicker(false)}
-          />
-        )}
-      </div>
+      <form onSubmit={handleSubmit} className="flex items-center gap-2 p-3 border-t border-panel2">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Написати в чат..."
+          maxLength={500}
+          className="flex-1 bg-panel2 text-cream placeholder:text-mist rounded-full px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-banana"
+        />
+        <button
+          type="submit"
+          disabled={!text.trim()}
+          className="bg-banana text-ink font-display font-semibold rounded-full px-4 py-2.5 text-sm disabled:opacity-40 active:scale-95 transition-transform"
+        >
+          ➤
+        </button>
+      </form>
+
+      {activeMessage && (
+        <MessageActionSheet
+          message={activeMessage}
+          onClose={() => setActiveMessage(null)}
+          onReact={(emoji) => {
+            onReact(activeMessage.id, emoji);
+            setActiveMessage(null);
+          }}
+          onReply={() => {
+            setReplyTo(activeMessage);
+            setActiveMessage(null);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function ChatMessage({ msg, isMine, onReply, onReact, replyQuote }) {
-  const [showReactMenu, setShowReactMenu] = useState(false);
-
+function ChatMessage({ msg, isMine, myUserId, onOpenActions }) {
   if (msg.system) {
     return (
-      <div className="text-center my-2">
+      <div className="text-center my-1">
         <span className="text-xs text-mist bg-panel2 rounded-full px-3 py-1">
           {msg.text}
         </span>
@@ -198,76 +176,76 @@ function ChatMessage({ msg, isMine, onReply, onReact, replyQuote }) {
     );
   }
 
-  const hasReactions = msg.reactions && Object.keys(msg.reactions).length > 0;
+  const time = formatTime(msg.ts);
+  const reactionEntries = Object.entries(msg.reactions || {}).filter(
+    ([, users]) => users.length > 0
+  );
 
   return (
-    <div className={`group flex flex-col relative ${isMine ? "items-end" : "items-start"}`}>
-      <span className="text-xs text-mist px-1 mb-0.5">{msg.from?.name}</span>
-      
-      <div className={`absolute top-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20 bg-panel border border-panel2 rounded-lg p-1 shadow-lg ${isMine ? "right-12" : "left-12"} -mt-5`}>
-        <button onClick={onReply} className="text-[10px] text-cream hover:text-banana px-1.5 py-0.5">
-          Відповісти
+    <div className={`flex gap-2 ${isMine ? "flex-row-reverse" : "flex-row"}`}>
+      {!isMine && <Avatar name={msg.from?.name} avatarUrl={msg.from?.avatarUrl} size={28} />}
+
+      <div className={`flex flex-col max-w-[78%] ${isMine ? "items-end" : "items-start"}`}>
+        {!isMine && (
+          <span className="text-xs text-banana font-medium px-1 mb-0.5">{msg.from?.name}</span>
+        )}
+
+        <button
+          onClick={onOpenActions}
+          className={`text-left px-3 py-2 rounded-2xl text-sm break-words active:scale-[0.98] transition-transform ${
+            isMine
+              ? "bg-banana text-ink rounded-br-md"
+              : "bg-panel2 text-cream rounded-bl-md"
+          }`}
+        >
+          {msg.replyTo && (
+            <div
+              className={`mb-1 pl-2 border-l-2 rounded-sm ${
+                isMine ? "border-ink/40" : "border-banana"
+              }`}
+            >
+              <p className={`text-xs font-medium ${isMine ? "text-ink/70" : "text-banana"}`}>
+                {msg.replyTo.fromName}
+              </p>
+              <p className={`text-xs truncate ${isMine ? "text-ink/60" : "text-mist"}`}>
+                {msg.replyTo.text}
+              </p>
+            </div>
+          )}
+
+          <div className="flex items-end gap-2">
+            <span className="whitespace-pre-wrap">{msg.text}</span>
+            <span className={`text-[10px] shrink-0 self-end ${isMine ? "text-ink/60" : "text-mist"}`}>
+              {time}
+            </span>
+          </div>
         </button>
-        <div className="relative">
-          <button onClick={() => setShowReactMenu(!showReactMenu)} className="text-[10px] text-cream hover:text-banana px-1.5 py-0.5">
-            Реакція
-          </button>
-          
-          {showReactMenu && (
-            <div className="absolute top-full mt-1 bg-panel2 border border-mist/20 rounded-full flex gap-1 p-1 shadow-xl z-30 right-0">
-              {QUICK_EMOJIS.map(emoji => (
-                <button 
-                  key={emoji} 
-                  onClick={() => {
-                    onReact(emoji);
-                    setShowReactMenu(false);
-                  }}
-                  className="hover:scale-125 transition-transform text-sm px-1"
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
 
-      <div className="max-w-[85%] relative">
-        <div className={`px-3 py-2 text-sm break-words flex flex-col ${
-          isMine 
-            ? "bg-banana text-ink rounded-2xl rounded-tr-sm" 
-            : "bg-panel2 text-cream rounded-2xl rounded-tl-sm"
-        }`}>
-          {replyQuote && (
-            <div className={`text-xs mb-1 pl-2 border-l-2 opacity-80 truncate max-w-full ${isMine ? "border-ink/30" : "border-banana/50"}`}>
-              <span className="font-semibold">{replyQuote.from?.name}: </span>
-              {replyQuote.text}
-            </div>
-          )}
-          
-          <span>{msg.text}</span>
-        </div>
-
-        {hasReactions && (
-          <div className={`flex flex-wrap gap-1 mt-1 z-10 relative ${isMine ? "justify-end" : "justify-start"}`}>
-            {Object.entries(msg.reactions).map(([emoji, users]) => (
-              <button 
-                key={emoji} 
-                onClick={() => onReact(emoji)}
-                className="flex items-center gap-1 bg-panel border border-panel2 px-1.5 py-[2px] rounded-full text-[10px] text-cream hover:border-mist transition-colors"
-                title={users.join(", ")}
+        {reactionEntries.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {reactionEntries.map(([emoji, users]) => (
+              <span
+                key={emoji}
+                className={`text-xs rounded-full px-1.5 py-0.5 flex items-center gap-1 ${
+                  users.includes(myUserId)
+                    ? "bg-banana/20 border border-banana/60"
+                    : "bg-panel2"
+                }`}
               >
-                <span>{emoji}</span>
-                <span className="text-mist">{users.length}</span>
-              </button>
+                {emoji} {users.length}
+              </span>
             ))}
           </div>
         )}
       </div>
-      
-      {showReactMenu && (
-        <div className="fixed inset-0 z-20" onClick={() => setShowReactMenu(false)} />
-      )}
     </div>
   );
+}
+
+function formatTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const hh = d.getHours().toString().padStart(2, "0");
+  const mm = d.getMinutes().toString().padStart(2, "0");
+  return `${hh}:${mm}`;
 }
