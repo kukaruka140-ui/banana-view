@@ -155,6 +155,50 @@ export class Room {
     this.touch();
   }
 
+  findChatMessage(messageId) {
+    return this.chatHistory.find((m) => m.id === messageId) || null;
+  }
+
+  /**
+   * Перемикає реакцію користувача на повідомленні.
+   * Якщо користувач вже поставив цей емодзі - знімає його,
+   * інакше додає (і знімає попередню реакцію цього ж користувача,
+   * якщо вона була - один юзер може мати лише одну реакцію на повідомлення).
+   *
+   * message.reactions: { [emoji]: string[] (масив userId) }
+   *
+   * Повертає оновлений message.reactions або null, якщо повідомлення не знайдено.
+   */
+  toggleReaction(messageId, userId, emoji) {
+    const message = this.findChatMessage(messageId);
+    if (!message) return null;
+
+    if (!message.reactions) message.reactions = {};
+
+    let hadThisEmoji = false;
+
+    // Знімаємо попередню реакцію цього юзера (на будь-який емодзі)
+    for (const key of Object.keys(message.reactions)) {
+      const idx = message.reactions[key].indexOf(userId);
+      if (idx !== -1) {
+        if (key === emoji) hadThisEmoji = true;
+        message.reactions[key].splice(idx, 1);
+        if (message.reactions[key].length === 0) {
+          delete message.reactions[key];
+        }
+      }
+    }
+
+    // Якщо у юзера не було саме цього емодзі - додаємо
+    if (!hadThisEmoji) {
+      if (!message.reactions[emoji]) message.reactions[emoji] = [];
+      message.reactions[emoji].push(userId);
+    }
+
+    this.touch();
+    return message.reactions;
+  }
+
   addToPlaylist(item) {
     this.playlist.push(item);
     this.touch();
